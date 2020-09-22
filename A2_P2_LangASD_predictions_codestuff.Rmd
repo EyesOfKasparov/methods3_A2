@@ -63,6 +63,7 @@ join_preds <- function(df, preds) {
     drop_na()
 }
 
+normalize <- function(x) {(x-mean(x, na.rm=T)) / sd(x, na.rm=T)}
 ```
 
 
@@ -129,7 +130,7 @@ df_train <- read_csv("data_clean.csv") %>%
                              "White", "Other"),
          Child.ID = as_factor(Child.ID)) %>%
   # Rescale data
-  mutate(across(where(is.numeric), scale))
+  mutate(across(where(is.numeric), normalize))
 
 
 
@@ -164,12 +165,13 @@ predictions <- predict(besty_model) %>%
 
 # Adding predictions to data
 df_eval <- df_train %>% 
-  join_preds(preds)
+  join_preds(predictions)
 
 
 
 rmse_model_train <- Metrics::rmse(df_eval$CHI_MLU, df_eval$prediction)
 
+rmse_model_train
 
 
 
@@ -181,7 +183,8 @@ token_test <- read_csv("token_test.csv")
 
 
 data_test <- CleanUpData(demo_test, lu_test, token_test) %>% 
-  mutate(row_num = row_number())
+  mutate(row_num = row_number(), 
+         across(where(is.numeric),  normalize))
   
 
   
@@ -200,10 +203,7 @@ df_test_eval <- data_test %>%
 # calculate RMSE
 rmse_test <- Metrics::rmse(df_test_eval$CHI_MLU, df_test_eval$prediction)
 
-
-#- optional: predictions are never certain, can you identify the uncertainty of the predictions? (e.g. google predictinterval())
-predictInterval(besty_model, data_test, allow.new.levels=TRUE, interval="predict")
-
+rbind(rmse_model_train, rmse_test)
 ```
 
 [HERE GOES YOUR ANSWER]
@@ -413,7 +413,7 @@ You want to evaluate:
 ```{r}
 bernie_data <- data_test %>% 
   filter(Child.ID == "Bernie") %>%
-  mutate(across(where(is.numeric), rescale), 
+  mutate(across(where(is.numeric), normalize), 
          row_num = row_number()) 
 
 
