@@ -183,11 +183,10 @@ token_test <- read_csv("token_test.csv")
 
 
 data_test <- CleanUpData(demo_test, lu_test, token_test) %>% 
-  mutate(row_num = row_number(), 
-         across(where(is.numeric),  normalize))
+  mutate(across(where(is.numeric),  normalize)) %>% 
+  mutate(row_num = row_number())
   
 
-  
 
 #- test the performance of the models on the test data (Tips: google the functions "predict()")
 
@@ -252,7 +251,7 @@ for (fold in folds) {
   m1 <- lmer(CHI_MLU ~ Visit + Diagnosis + (1|Child.ID),
              data=traindat)
   
-  preds <- predict(m1, testdat, allow.new.levels=T) %>% 
+  preds <- predict(besty_model, testdat, allow.new.levels=T) %>% 
     nicify_predictions()
   
   eval_df <- testdat %>% 
@@ -275,7 +274,7 @@ result_df %>% summarize(mean_RMSE = mean(rmse))
 #- Report the results and comment on them. 
 
 #- Now try to find the best possible predictive model of ChildMLU, that is, the one that produces the best cross-validated results.
-model_list <- list("m1" = m1, "m2" = m2, "m3" = m3)
+model_list <- list("m1" = m1, "m2" = m2, "m3" = m3, "besty" = besty_model)
 
 
 result_df <- tibble(model_name=character(), cv_num=numeric(), rmse=numeric())
@@ -304,7 +303,8 @@ for (name in names(model_list)) {
 
 result_df %>% 
   group_by(model_name) %>% 
-  summarise(mean(rmse))
+  summarise(rmse_cv = mean(rmse)) %>% 
+  arrange(rmse_cv)
 
 ```
 
@@ -386,16 +386,14 @@ rmse_viz_df <- result_df %>%
   left_join(test_set_results) %>% 
   gather(key = "result_type", value = "rmse", -model_name)
   
-ggplot(rmse_viz_df, aes(model_name, rmse)) + 
+compare_plot <- ggplot(rmse_viz_df, aes(model_name, rmse)) + 
   geom_bar(aes(fill = result_type), position="dodge", 
            stat="identity") + 
   theme_minimal() + 
   labs(title = "rmse: CV vs Test set", x = "Model Name")
 
+ggsave("rmse_compare.png", compare_plot)
 ```
-
-0.5 vs 15.5 (!) --> wtf, way, way, way more
-
 [HERE GOES YOUR ANSWER]
 
 ### Exercise 3) Assessing the single child
@@ -411,19 +409,43 @@ You want to evaluate:
 - how does the child fare compared to the model predictions at Visit 6? Is the child below or above expectations? (tip: use the predict() function on Bernie's data only and compare the prediction with the actual performance of the child)
 
 ```{r}
+
+non_normalized_data <- CleanUpData(demo_test, lu_test, token_test)
+
+bernie_mlu <- non_normalized_data %>% 
+  filter(Child.ID == "Bernie") %>% 
+  pull(CHI_MLU)
+
+
+
+mean_non_normalized_MLU <- read_csv("data_clean.csv") %>% 
+  filter(Diagnosis == "TD") %>% 
+  group_by(Visit) %>%
+  summarise(mean_MLU = mean(CHI_MLU, na.rm=T)) %>%
+  mutate(bernie_score = bernie_mlu - mean_MLU)
+
+mean_non_normalized_MLU
+
+
+
+
+```
+
+```{r}
 bernie_data <- data_test %>% 
   filter(Child.ID == "Bernie") %>%
-  mutate(across(where(is.numeric), normalize), 
-         row_num = row_number()) 
+  mutate(across(where(is.numeric), normalize)) %>% 
+  mutate(row_num = row_number())
 
 
+bernie_data
 bernie_preds <- bernie_data %>% 
   # The best model from cv excluding the disaster
-  predict(m2, ., allow.new.levels=T) %>% 
+  predict(m3, ., allow.new.levels=T) %>% 
   nicify_predictions()
 
-bernie_preds
 
+predict(m3, data_test, allow.new.levels=T)
 bernie_data %>% 
   left_join(bernie_preds) %>% 
   select(CHI_MLU, prediction) 
@@ -441,16 +463,27 @@ Then try to find the best possible predictive model of ChildMLU, that is, the on
 ```{r}
 pacman::p_load(broom.mixed)
 
-m1 <- lmer(CHI_MLU ~ Visit + Diagnosis + (1|Child.ID),
+m1 <- lmerTest::lmer(CHI_MLU ~ Visit + Diagnosis + (1|Child.ID),
                     data=df_train, REML = F)
 
-m2 <- lmer(CHI_MLU ~ Visit*Diagnosis + (1|Child.ID),
+m2 <- lmerTest::lmer(CHI_MLU ~ Visit*Diagnosis + (1|Child.ID),
                     data=df_train, REML = F)
 
-m3 <- lmer(CHI_MLU ~ (Visit + Diagnosis + MOT_MLU + verbalIQ1)^2 + (1|Child.ID),
+m3 <- lmerTest::lmer(CHI_MLU ~ (Visit + Diagnosis + MOT_MLU + verbalIQ1)^2 + (1|Child.ID),
                     data=df_train, REML = F)
 
-model_list <- list("m1" = m1, "m2" = m2, "m3" = m3)
+besty_model <- lmerTest::lmer(CHI_MLU ~ Visit + Ethnicity + Diagnosis + Gender + Age + Socialization + 
+    MOT_MLU + types_MOT + types_CHI + 
+    tokens_MOT + tokens_CHI + (1 | Child.ID) + Visit:Diagnosis + 
+    Visit:Gender + Visit:Socialization + Ethnicity:Age + Ethnicity:types_MOT + 
+    Ethnicity:types_CHI + Ethnicity:tokens_MOT + Diagnosis:Socialization + Gender:Age + 
+    Gender:Socialization + Gender:types_CHI + Gender:tokens_CHI + 
+    Age:Socialization + Age:MOT_MLU  + 
+    Socialization:tokens_MOT + MOT_MLU:tokens_MOT + MOT_MLU:tokens_CHI + 
+    types_MOT:types_CHI + types_CHI:tokens_MOT + tokens_MOT:tokens_CHI, data=df_train, REML = F)
+
+
+model_list <- list("m1" = m1, "m2" = m2, "m3" = m3, "besty" = besty_model)
 
 # glancing at the stuff
 get_relevant_metrics <- function(model_name) {
@@ -468,6 +501,8 @@ summarised_cv <- result_df %>%
 map_df(names(model_list), get_relevant_metrics) %>% 
   arrange(AIC) %>% 
   left_join(summarised_cv, by = c("name" = "model_name"))
+
+
 ```
 
 Note: m3 is super overfit and it what the fuck
