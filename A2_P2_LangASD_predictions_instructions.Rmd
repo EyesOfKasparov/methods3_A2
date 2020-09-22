@@ -49,67 +49,42 @@ How did your models from last time perform? In this exercise you have to compare
 
 pacman::p_load(readr,dplyr,stringr,lmerTest,Metrics,caret)
 
-## Clean up function, included to inspire you
-
-CleanUpData <- function(Demo,LU,Word){
-  
-  Speech <- merge(LU, Word) %>% 
-    rename(
-      Child.ID = SUBJ, 
-      Visit=VISIT) %>%
-    mutate(
-      Visit = as.numeric(str_extract(Visit, "\\d")),
-      Child.ID = gsub("\\.","", Child.ID)
-      ) %>%
-    dplyr::select(
-      Child.ID, Visit, MOT_MLU, CHI_MLU, types_MOT, types_CHI, tokens_MOT, tokens_CHI
-    )
-  
-  Demo <- Demo %>%
-    dplyr::select(
-      Child.ID, Visit, Ethnicity, Diagnosis, Gender, Age, ADOS, MullenRaw, ExpressiveLangRaw, Socialization
-    ) %>%
-    mutate(
-      Child.ID = gsub("\\.","", Child.ID)
-    )
-    
-  Data=merge(Demo,Speech,all=T)
-  
-  Data1= Data %>% 
-     subset(Visit=="1") %>% 
-     dplyr::select(Child.ID, ADOS, ExpressiveLangRaw, MullenRaw, Socialization) %>%
-     rename(Ados1 = ADOS, 
-            verbalIQ1 = ExpressiveLangRaw, 
-            nonVerbalIQ1 = MullenRaw,
-            Socialization1 = Socialization) 
-  
-  Data=merge(Data, Data1, all=T) %>%
-    mutate(
-      Child.ID = as.numeric(as.factor(as.character(Child.ID))),
-      Visit = as.numeric(as.character(Visit)),
-      Gender = recode(Gender, 
-         "1" = "M",
-         "2" = "F"),
-      Diagnosis = recode(Diagnosis,
-         "A"  = "ASD",
-         "B"  = "TD")
-    )
-
-  return(Data)
-}
-
 # Load training Data
+train <- read_csv("data_clean.csv") %>%
+  mutate(Child.ID = as.factor(Child.ID),
+         Gender = as.factor(Gender),
+         Diagnosis = as.factor(Diagnosis),
+         Ethnicity = as.factor(ifelse(Ethnicity == "White", "white", "other"))) %>%
+  mutate(across(where(is.numeric), rescale)) %>%
+  select(-c(ADOS))
+
+lmerTest::lmer(
+  CHI_MLU ~
+    (Child.ID + Gender + Diagnosis + Ethnicity + Visit + Age + Socialization) ^ 2 + (1 | Child.ID),
+  data = train
+)
 
 
 #- recreate the models you chose last time (just write the code again and apply it to Train Data)
-
+besty_model <-
+  lmerTest::lmer(
+    CHI_MLU ~ Visit + Diagnosis + Ethnicity + Gender + Age + ADOS +
+      MullenRaw + ExpressiveLangRaw + Socialization + MOT_MLU  + Visit:Diagnosis + Visit:Age + Visit:ADOS + Visit:Socialization +
+      Diagnosis:Ethnicity + Diagnosis:ExpressiveLangRaw + Diagnosis:MOT_MLU +
+      Ethnicity:Gender + Ethnicity:ADOS + Ethnicity:MullenRaw +
+      Ethnicity:ExpressiveLangRaw + Ethnicity:Socialization + Age:ADOS +
+      Age:Socialization + ADOS:ExpressiveLangRaw + MullenRaw:MOT_MLU + (1 |
+                                                                          Child.ID),
+    data = train
+  )
 
 #- calculate performance of the model on the training data: root mean square error is a good measure. (Tip: google the function rmse())
 
-
+Metrics::rmse(besty_model)
 
 #- create the test dataset (apply the code from assignment 1 or my function to clean up the 3 test datasets)
 # Test data
+
 
 #- test the performance of the models on the test data (Tips: google the functions "predict()")
 
