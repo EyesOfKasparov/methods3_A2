@@ -116,10 +116,11 @@ CleanUpData <- function(Demo,LU,Word){
 
   return(Data)
 }
+set.seed(123)
 ```
 
 
-
+### Loading data and predicting old models
 ```{r, include = T}
 
 pacman::p_load(readr,dplyr,stringr,lmerTest,Metrics,caret, tidymodels)
@@ -229,26 +230,29 @@ m3 <- lmer(CHI_MLU ~ (Visit + Diagnosis + MOT_MLU + verbalIQ1)^2 + (1|Child.ID),
 
 folds <- createFolds(df_train$Child.ID, k=10)
 
-result_df <- tibble(cv_num=numeric(), rmse=numeric())
-i <- 1
-for (fold in folds) {
-  traindat <- filter(df_train, !Child.ID %in% fold)
-  testdat <- filter(df_train, Child.ID %in% fold)
+result_df <- tibble(loop_num=numeric(), cv_num=numeric(), rmse=numeric())
 
-  m1 <- lmer(CHI_MLU ~ Visit + Diagnosis + (1|Child.ID),
-             data=traindat)
+for (j in 1:5) {
+  i <- 1
+  for (fold in folds) {
+    traindat <- filter(df_train, !Child.ID %in% fold)
+    testdat <- filter(df_train, Child.ID %in% fold)
   
-  preds <- predict(besty_model, testdat, allow.new.levels=T) %>% 
-    nicify_predictions()
-  
-  eval_df <- testdat %>% 
-    join_preds(preds)
-  result_df <- result_df %>% 
-    bind_rows(tibble(rmse=Metrics::rmse(eval_df$CHI_MLU,
-                                        eval_df$prediction ),
-              cv_num = i))
-  
-  i <- i + 1
+    model <- update(besty_model, data=traindat)
+      
+    preds <- predict(besty_model, testdat, allow.new.levels=T) %>% 
+      nicify_predictions()
+    
+    eval_df <- testdat %>% 
+      join_preds(preds)
+    result_df <- result_df %>% 
+      bind_rows(tibble(rmse=Metrics::rmse(eval_df$CHI_MLU,
+                                          eval_df$prediction ),
+                       cv_num = i,
+                       loop_num = j))
+    
+    i <- i + 1
+  }
 }
 
 result_df %>% summarize(mean_RMSE = mean(rmse))
@@ -265,31 +269,35 @@ result_df %>% summarize(mean_RMSE = mean(rmse))
 model_list <- list("m1" = m1, "m2" = m2, "m3" = m3, "besty" = besty_model)
 
 
-result_df <- tibble(model_name=character(), cv_num=numeric(), rmse=numeric())
+model_result_df <- tibble(model_name=character(), cv_num=numeric(), rmse=numeric(), loop_num=numeric())
+
 for (name in names(model_list)) {
-  i <- 1
-  for (fold in folds) {
-    traindat <- filter(df_train, !Child.ID %in% fold)
-    testdat <- filter(df_train, Child.ID %in% fold)
-  
-    model <- update(model_list[[name]], data=traindat)
+  for (j in 1:5) {
+    i <- 1
+    for (fold in folds) {
+      traindat <- filter(df_train, !Child.ID %in% fold)
+      testdat <- filter(df_train, Child.ID %in% fold)
     
-    preds <- predict(model, testdat, allow.new.levels=T) %>% 
-      nicify_predictions()
-    
-    eval_df <- testdat %>% 
-      join_preds(preds)
-    result_df <- result_df %>% 
-      bind_rows(tibble(rmse=Metrics::rmse(eval_df$CHI_MLU,
-                                          eval_df$prediction),
-                       model_name = name, 
-                       cv_num = i))
-    
-    i <- i + 1
+      model <- update(model_list[[name]], data=traindat)
+      
+      preds <- predict(model, testdat, allow.new.levels=T) %>% 
+        nicify_predictions()
+      
+      eval_df <- testdat %>% 
+        join_preds(preds)
+      model_result_df <- model_result_df %>% 
+        bind_rows(tibble(rmse=Metrics::rmse(eval_df$CHI_MLU,
+                                            eval_df$prediction),
+                         model_name = name, 
+                         cv_num = i,
+                         loop_num = j))
+      
+      i <- i + 1
+    }
   }
 }
 
-result_df %>% 
+model_result_df %>% 
   group_by(model_name) %>% 
   summarise(rmse_cv = mean(rmse)) %>% 
   arrange(rmse_cv)
@@ -365,7 +373,7 @@ for (model_name in names(model_list)) {
 
 
 # Joinign and plotting
-rmse_viz_df <- result_df %>% 
+rmse_viz_df <- model_result_df %>% 
   group_by(model_name) %>% 
   summarise(cv_rmse = mean(rmse)) %>% 
   left_join(test_set_results) %>% 
@@ -418,21 +426,21 @@ mean_non_normalized_MLU
 ```{r}
 bernie_data <- data_test %>% 
   filter(Child.ID == "Bernie") %>%
-  mutate(across(where(is.numeric), normalize)) %>% 
   mutate(row_num = row_number())
 
 
-bernie_data
+
 bernie_preds <- bernie_data %>% 
   # The best model from cv excluding the disaster
   predict(m3, ., allow.new.levels=T) %>% 
   nicify_predictions()
 
 
-predict(m3, data_test, allow.new.levels=T)
 bernie_data %>% 
   left_join(bernie_preds) %>% 
-  select(CHI_MLU, prediction) 
+  filter(Visit == max(Visit)) %>% 
+  select(CHI_MLU, prediction) %>% 
+  mutate(abs_dif = prediction - CHI_MLU)
 ```
 
 
@@ -478,7 +486,7 @@ get_relevant_metrics <- function(model_name) {
 }
 
 
-summarised_cv <- result_df %>% 
+summarised_cv <- model_result_df %>% 
   group_by(model_name) %>% 
   summarise(cv_rmse = mean(rmse))
 
@@ -492,10 +500,6 @@ IC_df
 Note: Even though the performance of besty is sub-par on the hold-out data, it still performs vastly better on information criterion measures - shows the issues of those
 
 - Bonus question for the optional exercise: are information criteria correlated with cross-validated RMSE? That is, if you take AIC for Model 1, Model 2 and Model 3, do they co-vary with their cross-validated RMSE?
-
-```{r}
-cor.test(IC_df$AIC, IC_df$cv_rmse, method = "spearman")
-```
 
 
 ### OPTIONAL: Exercise 5): Using Lasso for model selection
